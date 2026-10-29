@@ -173,7 +173,11 @@ jobs:
 
       # Lets anyone check that a binary was built by this workflow from this
       # tag:  gh attestation verify <file> --repo <owner>/<repo>
-      - uses: actions/attest-build-provenance@v2
+      # GitHub only offers attestations for public repositories (or Enterprise
+      # Cloud), so private repositories skip this step instead of failing.
+      - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             dist/xentree-connect-*

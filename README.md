@@ -46,7 +46,7 @@ Installs to `%USERPROFILE%\.xentree\bin` and adds it to your user `PATH` (open a
 
 **Platforms.** Linux x86_64 and aarch64 (static builds — they run on glibc and musl distributions alike), macOS Intel and Apple Silicon, Windows x64 (also runs on Windows on ARM through emulation).
 
-**Verify a download independently.** Release binaries carry build-provenance attestations:
+**Verify a download independently.** When releases are built from a public repository, binaries carry build-provenance attestations (GitHub does not offer these for private repositories):
 
 ```sh
 gh attestation verify xentree-connect-x86_64-unknown-linux-musl --repo godfreu/xentree-connect
@@ -312,14 +312,14 @@ Flags: `--config FILE`, `--key FILE`, `--key-group GID` (Unix), `--base-url URL`
 - **Webhooks.** HMAC-SHA256 over `timestamp.body`, compared in constant time, checked against both the current and the previous secret during rotation, with a 5-minute replay window and event-ID de-duplication. Unauthenticated requests can't fill the de-duplication cache.
 - **Gateway access control.** The gateway secret must be at least 32 characters and is compared via constant-time digests. Credentials in URLs are off by default; proxy identity headers are trusted only if you name them, and a proxy-authenticated user can only launch as themselves. `/deprovision` exists only on the internal listener and *also* requires the secret.
 - **Network hygiene.** Xentree and webhook-relay URLs must be `https` (plain `http` only for localhost), redirects are never followed with credentials, IDs in URLs are percent-encoded, and the launch page is served with a strict Content-Security-Policy (the single inline script is pinned by hash; the form can only post to Xentree), `no-store`, `no-referrer`, `nosniff` and `X-Frame-Options: DENY`.
-- **Supply chain.** Releases are built in CI from the committed `Cargo.lock` after the test suite passes on Linux, macOS and Windows, with build-provenance attestations and a `SHA256SUMS` file; installers verify that checksum before installing.
+- **Supply chain.** Releases are built in CI from the committed `Cargo.lock` after the test suite passes on Linux, macOS and Windows, with a `SHA256SUMS` file and, for public repositories, build-provenance attestations; installers verify that checksum before installing.
 
 ### Known limitations
 
 - The gateway does not terminate TLS and does not rate-limit failed authentication attempts — use a proxy for both.
 - De-duplication and relay retries are held in memory: they reset on restart and aren't shared between replicas. A relayed event that fails all attempts is logged and dropped (Xentree has already been acknowledged).
 - Changing webhook or gateway secrets requires a restart.
-- The installers' checksum protects against corruption and tampering of a single file, not against a compromised release host; use `gh attestation verify` where that matters.
+- The installers' checksum protects against corruption and tampering of a single file, not against a compromised release host; use `gh attestation verify` where that matters (public repositories only).
 
 ---
 
@@ -340,4 +340,4 @@ Flags: `--config FILE`, `--key FILE`, `--key-group GID` (Unix), `--base-url URL`
 
 ## Releases
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks the tag matches `Cargo.toml`, runs tests and clippy on Linux, macOS and Windows, builds all platforms, writes `SHA256SUMS`, attests the artifacts, and creates a **draft** GitHub Release. Nothing is public until you publish the draft — which is also the moment the installers' `latest` pointer moves to it. The release also carries `install.sh` and `install.ps1`; publish them at the installer URLs (`get.xentree.ai/connect`, `…/connect.ps1`).
+Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks the tag matches `Cargo.toml`, runs tests and clippy on Linux, macOS and Windows, builds all platforms, writes `SHA256SUMS`, attests the artifacts (public repositories only), and creates a **draft** GitHub Release. Nothing is public until you publish the draft — which is also the moment the installers' `latest` pointer moves to it. The release also carries `install.sh` and `install.ps1`; publish them at the installer URLs (`get.xentree.ai/connect`, `…/connect.ps1`).
