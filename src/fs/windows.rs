@@ -26,7 +26,7 @@ use windows_sys::Win32::{
     System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
-use super::FsError;
+use super::{FsError, KeyOwnershipPolicy};
 
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 
@@ -36,7 +36,7 @@ fn wide(s: &OsStr) -> Vec<u16> {
 
 /// Windows has no mode bits; new directories inherit their parent's ACL.
 /// Only the key *file* gets an explicit protected DACL.
-pub fn create_private_dir_all(dir: &Path) -> io::Result<()> {
+pub fn create_private_dir_all(dir: &Path, _policy: &KeyOwnershipPolicy) -> io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
@@ -142,7 +142,11 @@ pub fn create_private_new(path: &Path) -> io::Result<File> {
 
 /// The DACL must be protected (no inheritance) and contain exactly one
 /// allow-ACE for the current user.
-pub fn verify_private(file: &File, path: &Path) -> Result<(), FsError> {
+pub fn verify_private(
+    file: &File,
+    path: &Path,
+    _policy: &KeyOwnershipPolicy,
+) -> Result<(), FsError> {
     let bad = |reason: &str| FsError::InsecurePermissions {
         path: path.to_path_buf(),
         reason: reason.to_string(),
@@ -228,6 +232,16 @@ pub fn verify_private(file: &File, path: &Path) -> Result<(), FsError> {
 
     unsafe { LocalFree(sd.cast()) };
     result
+}
+
+// The only Windows policy is CurrentUserOnly, which the DACL set at creation
+// already enforces, so there is no ownership or mode to adjust.
+pub fn assign_owner(_file: &File, _policy: &KeyOwnershipPolicy) -> io::Result<()> {
+    Ok(())
+}
+
+pub fn apply_mode(_file: &File, _policy: &KeyOwnershipPolicy) -> io::Result<()> {
+    Ok(())
 }
 
 pub fn sync_dir(_dir: &Path) {}

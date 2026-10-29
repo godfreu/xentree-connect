@@ -9,16 +9,19 @@ publish = false
 
 [dependencies]
 base64 = "0.22"
+bytes = "1"
 httpdate = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 ring = "0.17"
 rsntp = { version = "4", default-features = false, features = ["async"] }
+secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 subtle = "2"
 thiserror = "2"
 tokio = { version = "1", default-features = false, features = ["rt", "time", "macros", "net", "io-util"] }
 tracing = "0.1"
+url = "2"
 uuid = { version = "1", default-features = false, features = ["v4"] }
 zeroize = "1"
 
@@ -36,6 +39,8 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 tempfile = "3"
+# 0.6.5 uses let-chains (needs rustc 1.88); lift the cap when the toolchain moves.
+wiremock = ">=0.6.0, <0.6.5"
 
 [profile.release]
 lto = true
