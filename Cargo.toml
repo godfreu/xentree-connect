@@ -1,6 +1,6 @@
 [package]
 name = "xentree-connect"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.82"
 description = "Xentree Connect: key management and assertion signing"
