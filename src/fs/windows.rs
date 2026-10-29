@@ -40,6 +40,10 @@ pub fn create_private_dir_all(dir: &Path, _policy: &KeyOwnershipPolicy) -> io::R
     std::fs::create_dir_all(dir)
 }
 
+pub fn ensure_dir(dir: &Path, _policy: &KeyOwnershipPolicy) -> io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
 /// Current user's SID, kept alive alongside the buffer that backs it.
 struct UserSid {
     buf: Vec<u8>,

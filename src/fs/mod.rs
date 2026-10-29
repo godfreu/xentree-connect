@@ -173,6 +173,16 @@ fn write_and_install(
     }
 }
 
+/// Creates the directory a key will live in, appropriately for `policy`.
+///
+/// `CurrentUserOnly` creates missing ancestors owner-only. Other policies
+/// create just the final directory (its parent must exist) and give it the
+/// policy's group/owner, so a web server can traverse into it.
+pub fn ensure_key_dir(dir: &Path, policy: &KeyOwnershipPolicy) -> Result<(), FsError> {
+    policy.validate()?;
+    platform::ensure_dir(dir, policy).map_err(|e| FsError::io(dir, e))
+}
+
 /// Checks that an existing key file satisfies `policy` (for `health` and
 /// gateway startup).
 pub fn verify_private_file(path: &Path, policy: &KeyOwnershipPolicy) -> Result<(), FsError> {
@@ -504,6 +514,24 @@ mod tests {
                 let p = d.path().join("missing/k.pem");
                 assert!(write_private_file(&p, b"x", Existing::Fail, &group()).is_err());
                 assert!(!d.path().join("missing").exists());
+            }
+
+            #[test]
+            fn ensure_key_dir_creates_group_traversable_leaf_only() {
+                let d = tempdir().unwrap();
+                let leaf = d.path().join("moodledata");
+                ensure_key_dir(&leaf, &group()).unwrap();
+                let m = std::fs::metadata(&leaf).unwrap();
+                assert_eq!(m.mode() & 0o7777, 0o750);
+                assert_eq!(m.gid(), egid());
+                ensure_key_dir(&leaf, &group()).unwrap(); // idempotent
+                let deep = d.path().join("a/b");
+                assert!(ensure_key_dir(&deep, &group()).is_err());
+                assert!(!d.path().join("a").exists());
+                // default policy creates ancestors, owner-only
+                let own = d.path().join("x/y");
+                ensure_key_dir(&own, &CUO).unwrap();
+                assert_eq!(std::fs::metadata(&own).unwrap().mode() & 0o777, 0o700);
             }
 
             #[test]

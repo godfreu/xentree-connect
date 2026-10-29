@@ -33,6 +33,40 @@ pub fn create_private_dir_all(dir: &Path, policy: &KeyOwnershipPolicy) -> io::Re
     }
 }
 
+/// Creates the key directory. For non-default policies only the leaf is
+/// created (its parent must exist), with the group/owner of the policy and
+/// the file mode plus search (`x`) wherever read is granted.
+pub fn ensure_dir(dir: &Path, policy: &KeyOwnershipPolicy) -> io::Result<()> {
+    let (uid, gid) = match policy {
+        KeyOwnershipPolicy::CurrentUserOnly => return create_private_dir_all(dir, policy),
+        KeyOwnershipPolicy::GroupReadable { gid } => (None, Some(*gid)),
+        KeyOwnershipPolicy::SpecificOwner { uid, gid, .. } => (Some(*uid), Some(*gid)),
+    };
+    if dir.is_dir() {
+        return Ok(());
+    }
+    let parent = dir
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if !parent.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "parent of the key directory must exist",
+        ));
+    }
+    let file_mode = policy_mode(policy);
+    let dir_mode = file_mode | ((file_mode & 0o444) >> 2);
+    DirBuilder::new().mode(dir_mode).create(dir)?;
+    let finish = || {
+        std::fs::set_permissions(dir, Permissions::from_mode(dir_mode))?; // beat the umask
+        std::os::unix::fs::chown(dir, uid, gid)
+    };
+    finish().inspect_err(|_| {
+        let _ = std::fs::remove_dir(dir);
+    })
+}
+
 /// `create_new` implies `O_EXCL`, which also refuses to follow a symlink at the final component.
 /// Always owner-only at creation, whatever the policy.
 pub fn create_private_new(path: &Path) -> io::Result<File> {
