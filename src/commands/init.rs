@@ -14,6 +14,8 @@ use inquire::{Confirm, InquireError, Password, PasswordDisplayMode, Select, Text
 use secrecy::SecretString;
 use zeroize::Zeroizing;
 
+#[cfg(unix)]
+use crate::detectors::moodle;
 use crate::{
     api::{
         ApiError, ConnectClientResponse, CreateConnectClientRequest, OrganizationItem,
@@ -22,7 +24,7 @@ use crate::{
     clock::{self, Severity},
     config::{self, Config, OwnershipConfig, FILE_NAME, KEY_FILE_NAME},
     crypto::{CryptoError, Jwks, SigningKey},
-    detectors::{moodle, DetectedPlatform},
+    detectors::DetectedPlatform,
     fs::{
         ensure_key_dir, verify_private_file, write_private_file, Existing, FsError,
         KeyOwnershipPolicy,

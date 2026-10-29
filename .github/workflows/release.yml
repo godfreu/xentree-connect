@@ -1,0 +1,191 @@
+# Builds release binaries for every supported platform when a v* tag is pushed
+# and drafts a GitHub Release for review. Nothing is published automatically:
+# a person promotes the draft, and only then does `releases/latest` (which the
+# installers use) point at it.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Least privilege by default; jobs that need more say so.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Release binaries are built from the committed Cargo.lock only.
+  CARGO_FLAGS: --release --locked
+
+jobs:
+  # Never ship what doesn't pass its own tests, or a tag that disagrees with
+  # Cargo.toml. Tests run on every OS we ship for: the key-permission code is
+  # different on each (POSIX modes vs Windows ACLs).
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Tag matches the crate version
+        shell: bash
+        run: |
+          version="$(cargo pkgid | sed 's/.*[#@]//')"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}"
+            exit 1
+          fi
+      - name: Tests
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Installer script
+        if: runner.os == 'Linux'
+        run: |
+          sh -n install.sh
+          # shellcheck is preinstalled on GitHub's Ubuntu runners.
+          shellcheck install.sh
+
+  build:
+    needs: verify
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: static musl binaries cross-built with zig, so there is no
+          # system libc to match and no per-distro build.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            zig: true
+            smoke: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            zig: true
+            smoke: false
+          # Both macOS targets build on Apple Silicon runners.
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            zig: false
+            smoke: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            zig: false
+            smoke: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            zig: false
+            smoke: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cargo-zigbuild (installs zig too)
+        if: matrix.zig
+        run: pip3 install cargo-zigbuild
+
+      - name: Build (zig)
+        if: matrix.zig
+        run: cargo zigbuild ${{ env.CARGO_FLAGS }} --target ${{ matrix.target }}
+
+      - name: Build
+        if: ${{ !matrix.zig }}
+        run: cargo build ${{ env.CARGO_FLAGS }} --target ${{ matrix.target }}
+
+      - name: Check the Linux binary is fully static
+        if: contains(matrix.target, 'linux')
+        run: |
+          out="$(file target/${{ matrix.target }}/release/xentree-connect)"
+          echo "$out"
+          echo "$out" | grep -Eq 'statically linked|static-pie linked'
+
+      - name: Smoke test
+        if: matrix.smoke
+        shell: bash
+        run: |
+          ext=""; case "${{ matrix.target }}" in *windows*) ext=".exe";; esac
+          bin="target/${{ matrix.target }}/release/xentree-connect${ext}"
+          "$bin" --version
+          "$bin" --help > /dev/null
+          "$bin" health --help > /dev/null
+
+      - name: Stage the release asset
+        shell: bash
+        run: |
+          ext=""; case "${{ matrix.target }}" in *windows*) ext=".exe";; esac
+          mkdir dist
+          cp "target/${{ matrix.target }}/release/xentree-connect${ext}" \
+             "dist/xentree-connect-${{ matrix.target }}${ext}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xentree-connect-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the draft release
+      id-token: write # keyless signing of build provenance
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: xentree-connect-*
+          merge-multiple: true
+
+      - name: All five binaries are present
+        working-directory: dist
+        run: |
+          for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
+                   x86_64-apple-darwin aarch64-apple-darwin; do
+            test -f "xentree-connect-$t"
+          done
+          test -f xentree-connect-x86_64-pc-windows-msvc.exe
+
+      - name: Add the installers
+        run: cp install.sh install.ps1 dist/
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          # Covers the binaries (what the installers verify) and the installers themselves.
+          sha256sum xentree-connect-* install.sh install.ps1 > SHA256SUMS
+          cat SHA256SUMS
+
+      # Lets anyone check that a binary was built by this workflow from this
+      # tag:  gh attestation verify <file> --repo <owner>/<repo>
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/xentree-connect-*
+            dist/SHA256SUMS
+
+      - name: Draft the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --verify-tag \
+            --generate-notes \
+            --title "${GITHUB_REF_NAME}"
