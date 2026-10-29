@@ -7,6 +7,7 @@ use xentree_connect::{
         health::{self, HealthArgs, HealthInputs},
         init::{self, InitArgs},
     },
+    gateway::{self, GatewayArgs},
     lang::{tr, Lang},
 };
 
@@ -33,8 +34,8 @@ enum Command {
     Init(InitArgs),
     /// Check the system clock, key file permissions and API access.
     Health(HealthArgs),
-    /// Run the gateway for closed SaaS platforms (not available yet).
-    Gateway,
+    /// Run the gateway for closed SaaS platforms (SSO launch, webhooks, deprovisioning).
+    Gateway(GatewayArgs),
 }
 
 fn admin_token() -> Option<SecretString> {
@@ -70,9 +71,12 @@ async fn main() -> ExitCode {
             print!("{}", report.render());
             ExitCode::from(report.exit_code())
         }
-        Command::Gateway => {
-            eprintln!("{}", tr(lang, "gateway.unavailable", &[]));
-            ExitCode::from(2)
-        }
+        Command::Gateway(args) => match gateway::run(args, lang).await {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("{}", tr(lang, "cli.error", &[("error", &format!("{e:#}"))]));
+                ExitCode::from(1)
+            }
+        },
     }
 }

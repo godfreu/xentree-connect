@@ -334,9 +334,12 @@ async fn wizard(
     let base_url = match &args.base_url {
         Some(u) => u.clone(),
         None if yes => DEFAULT_BASE_URL.to_string(),
-        None => ask(Text::new(&tr(lang, "init.prompt.base_url", &[]))
-            .with_default(DEFAULT_BASE_URL)
-            .prompt())?,
+        None => required_prompt(
+            lang,
+            &tr(lang, "init.prompt.base_url", &[]),
+            Some(DEFAULT_BASE_URL),
+            MAX_URL,
+        )?,
     };
 
     // 2. Clock.
@@ -383,29 +386,40 @@ async fn wizard(
     let name = text_or_default(
         args.name.clone(),
         yes,
+        lang,
         &tr(lang, "init.prompt.name", &[]),
         format!("Xentree Connect ({platform_name})"),
+        MAX_NAME,
     )?;
     let client_id = text_or_default(
         args.client_id.clone(),
         yes,
+        lang,
         &tr(lang, "init.prompt.client_id", &[]),
         format!("xentree-{}", platform.id().replace('_', "-")),
+        MAX_CLIENT_ID,
     )?;
     let issuer = match args.issuer.clone().or_else(|| platform.suggested_issuer()) {
         Some(default) if args.issuer.is_some() || yes => default,
-        Some(default) => ask(Text::new(&tr(lang, "init.prompt.issuer", &[]))
-            .with_default(&default)
-            .prompt())?,
+        Some(default) => required_prompt(
+            lang,
+            &tr(lang, "init.prompt.issuer", &[]),
+            Some(&default),
+            MAX_URL,
+        )?,
         None if yes => anyhow::bail!(tr(lang, "init.err.issuer_required", &[])),
-        None => ask(Text::new(&tr(lang, "init.prompt.issuer", &[])).prompt())?,
+        None => required_prompt(lang, &tr(lang, "init.prompt.issuer", &[]), None, MAX_URL)?,
     };
+    validate_text(lang, &issuer, MAX_URL)
+        .map_err(|m| anyhow::anyhow!("{}: {m}", tr(lang, "init.prompt.issuer", &[])))?;
     let issuer = issuer.trim().trim_end_matches('/').to_string();
     let audience = text_or_default(
         args.audience.clone(),
         yes,
+        lang,
         &tr(lang, "init.prompt.audience", &[]),
         DEFAULT_AUDIENCE.into(),
+        MAX_NAME,
     )?;
     let auto_enroll = args.auto_enroll
         || (!yes
@@ -430,11 +444,15 @@ async fn wizard(
             .with_default(true)
             .prompt())?
     {
-        key_dir = PathBuf::from(ask(Text::new(&tr(lang, "init.key.dir_prompt", &[]))
-            .with_default(&key_dir.display().to_string())
-            .prompt())?);
+        key_dir = PathBuf::from(required_prompt(
+            lang,
+            &tr(lang, "init.key.dir_prompt", &[]),
+            Some(&key_dir.display().to_string()),
+            4096,
+        )?);
     }
-    let key_path = key_dir.join(KEY_FILE_NAME);
+    // Absolute, so the gateway can find the key from any working directory.
+    let key_path = std::path::absolute(key_dir.join(KEY_FILE_NAME))?;
     if key_path.exists() && !args.reuse_key {
         anyhow::bail!(tr(
             lang,
@@ -560,17 +578,67 @@ fn choose_org(
     Ok(ask(Select::new(&tr(lang, "init.orgs.select", &[]), choices).prompt())?.0)
 }
 
+/// Maximum lengths accepted by the Xentree API.
+const MAX_NAME: usize = 255;
+const MAX_CLIENT_ID: usize = 128;
+const MAX_URL: usize = 2048;
+
+/// Rejects blank and over-long input; shared by prompts and flags.
+pub fn validate_text(lang: Lang, value: &str, max_chars: usize) -> Result<(), String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err(tr(lang, "init.validation.required", &[]));
+    }
+    if v.chars().count() > max_chars {
+        return Err(tr(
+            lang,
+            "init.validation.too_long",
+            &[("max", &max_chars.to_string())],
+        ));
+    }
+    Ok(())
+}
+
+/// An `inquire` validator that applies [`validate_text`].
+fn required(lang: Lang, max_chars: usize) -> impl inquire::validator::StringValidator + Clone {
+    move |input: &str| {
+        Ok(match validate_text(lang, input, max_chars) {
+            Ok(()) => inquire::validator::Validation::Valid,
+            Err(msg) => inquire::validator::Validation::Invalid(msg.into()),
+        })
+    }
+}
+
+fn required_prompt(
+    lang: Lang,
+    prompt: &str,
+    default: Option<&str>,
+    max_chars: usize,
+) -> anyhow::Result<String> {
+    let mut text = Text::new(prompt).with_validator(required(lang, max_chars));
+    if let Some(d) = default {
+        text = text.with_default(d);
+    }
+    Ok(ask(text.prompt())?.trim().to_string())
+}
+
+/// Flag value, else the default (`--yes`), else a validated prompt. Flag and
+/// default values are validated too, so `--name ""` can't slip through.
 fn text_or_default(
     flag: Option<String>,
     yes: bool,
+    lang: Lang,
     prompt: &str,
     default: String,
+    max_chars: usize,
 ) -> anyhow::Result<String> {
-    match flag {
-        Some(v) => Ok(v),
-        None if yes => Ok(default),
-        None => ask(Text::new(prompt).with_default(&default).prompt()),
-    }
+    let value = match flag {
+        Some(v) => v,
+        None if yes => default,
+        None => return required_prompt(lang, prompt, Some(&default), max_chars),
+    };
+    validate_text(lang, &value, max_chars).map_err(|m| anyhow::anyhow!("{prompt}: {m}"))?;
+    Ok(value.trim().to_string())
 }
 
 /// Where the key goes and who may read it.
@@ -893,6 +961,73 @@ mod tests {
         assert!(
             id.contains("Xentree Connect telah disiapkan.") && id.contains("Langkah berikutnya")
         );
+    }
+
+    #[test]
+    fn blank_and_overlong_text_is_rejected() {
+        let l = Lang::En;
+        for blank in ["", " ", "   \t  "] {
+            assert!(validate_text(l, blank, 10).is_err(), "{blank:?}");
+        }
+        assert!(validate_text(l, "ok", 10).is_ok());
+        assert!(
+            validate_text(l, "  padded  ", 6).is_ok(),
+            "length is measured after trimming"
+        );
+        assert!(validate_text(l, &"x".repeat(11), 10).is_err());
+        assert!(
+            validate_text(l, &"é".repeat(10), 10).is_ok(),
+            "limits count characters, not bytes"
+        );
+        // localized messages
+        assert_eq!(
+            validate_text(Lang::Id, "", 5).unwrap_err(),
+            "Kolom ini wajib diisi."
+        );
+        assert_eq!(
+            validate_text(l, &"x".repeat(6), 5).unwrap_err(),
+            "Maximum 5 characters."
+        );
+    }
+
+    #[test]
+    fn the_inquire_validator_marks_blank_input_invalid() {
+        use inquire::validator::{StringValidator, Validation};
+        let v = required(Lang::En, 128);
+        assert!(matches!(v.validate("   "), Ok(Validation::Invalid(_))));
+        assert!(matches!(
+            v.validate("xentree-moodle"),
+            Ok(Validation::Valid)
+        ));
+    }
+
+    #[test]
+    fn flags_and_defaults_are_validated_too() {
+        let l = Lang::En;
+        let run = |flag: Option<&str>, yes, default: &str| {
+            text_or_default(
+                flag.map(String::from),
+                yes,
+                l,
+                "Name",
+                default.into(),
+                MAX_NAME,
+            )
+        };
+        assert!(run(Some(""), true, "d").is_err(), "blank --name");
+        assert!(run(Some("   "), false, "d").is_err());
+        assert_eq!(run(Some("  Acme  "), true, "d").unwrap(), "Acme");
+        assert!(run(None, true, "").is_err(), "blank default under --yes");
+        assert_eq!(run(None, true, "default").unwrap(), "default");
+        assert!(text_or_default(
+            Some("x".repeat(129)),
+            true,
+            l,
+            "Client ID",
+            "d".into(),
+            MAX_CLIENT_ID
+        )
+        .is_err());
     }
 
     #[test]

@@ -63,23 +63,9 @@ impl XentreeAdminClient {
         &self.base_url
     }
 
-    /// Builds `{base}/seg1/seg2/...`, percent-encoding each segment so an
-    /// attacker-influenced ID can't add path components or `..`.
+    /// Builds `{base}/seg1/seg2/...`; see [`endpoint_url`].
     pub(crate) fn endpoint(&self, segments: &[&str]) -> Result<Url, ApiError> {
-        if let Some(bad) = segments
-            .iter()
-            .find(|s| s.is_empty() || **s == "." || **s == "..")
-        {
-            return Err(ApiError::InvalidInput(format!(
-                "invalid path segment {bad:?}"
-            )));
-        }
-        let mut url = self.base_url.clone();
-        url.path_segments_mut()
-            .map_err(|()| ApiError::InvalidInput("base URL cannot carry a path".into()))?
-            .pop_if_empty()
-            .extend(segments);
-        Ok(url)
+        endpoint_url(&self.base_url, segments)
     }
 
     pub(crate) fn get(&self, url: Url) -> RequestBuilder {
@@ -132,7 +118,9 @@ impl XentreeAdminClient {
     }
 }
 
-fn normalize_base_url(raw: &str) -> Result<Url, ApiError> {
+/// Validates and canonicalizes a Xentree base URL (see
+/// [`XentreeAdminClient::with_base_url`]).
+pub(crate) fn normalize_base_url(raw: &str) -> Result<Url, ApiError> {
     let invalid = |m: &str| ApiError::InvalidInput(format!("base URL: {m}"));
     let mut url = Url::parse(raw.trim()).map_err(|e| invalid(&e.to_string()))?;
     if url.cannot_be_a_base() || url.host().is_none() {
@@ -159,11 +147,30 @@ fn normalize_base_url(raw: &str) -> Result<Url, ApiError> {
     Ok(url)
 }
 
-fn is_loopback(url: &Url) -> bool {
+pub(crate) fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
         Some(Host::Ipv4(ip)) => ip.is_loopback(),
         Some(Host::Ipv6(ip)) => ip.is_loopback(),
         None => false,
     }
+}
+
+/// Appends `segments` to `base`'s path, percent-encoding each one so an
+/// attacker-influenced ID can't add path components or `..`.
+pub(crate) fn endpoint_url(base: &Url, segments: &[&str]) -> Result<Url, ApiError> {
+    if let Some(bad) = segments
+        .iter()
+        .find(|s| s.is_empty() || **s == "." || **s == "..")
+    {
+        return Err(ApiError::InvalidInput(format!(
+            "invalid path segment {bad:?}"
+        )));
+    }
+    let mut url = base.clone();
+    url.path_segments_mut()
+        .map_err(|()| ApiError::InvalidInput("base URL cannot carry a path".into()))?
+        .pop_if_empty()
+        .extend(segments);
+    Ok(url)
 }

@@ -9,6 +9,7 @@ mod webhooks;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use client::{endpoint_url, is_loopback as is_loopback_url, normalize_base_url};
 pub use client::{XentreeAdminClient, DEFAULT_BASE_URL};
 pub use connect::{ConnectClientResponse, CreateConnectClientRequest};
 pub use error::ApiError;
