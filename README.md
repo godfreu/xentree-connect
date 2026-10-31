@@ -1,18 +1,18 @@
 # Xentree Connect
 
-Single-sign-on, webhooks and offboarding between your learning or HR platform and Xentree.
+Single-sign-on, webhooks and offboarding between your platform and Xentree.
 
 `xentree-connect` is one small static binary that:
 
 - **generates and protects** the signing key for your integration (ES256 / ECDSA P-256),
 - **registers** the integration with your Xentree organization,
 - **checks** that the clock, key permissions and API access are healthy (`health`), and
-- **bridges closed SaaS platforms** that can't run a plugin, such as Darwinbox, Workday or SAP (`gateway`).
+- **bridges closed SaaS platforms** that can't run a plugin, closed platforms (`gateway`).
 
 | You run… | Use |
 | --- | --- |
 | Moodle (or another system where you can install code) | [`init`](#moodle) — the platform signs launches itself |
-| A closed SaaS HRIS/LMS | [`gateway`](#closed-saas--darwinbox) — a service you host signs for it |
+| A closed SaaS platform | [`gateway`](#closed-saas--platform) — a service you host signs for it |
 
 ---
 
@@ -77,7 +77,7 @@ xentree-connect health              # confirm everything is in order
 
 The private key is written to disk *before* registration. If registration fails (for example a duplicate client ID), the key is kept; fix the problem and re-run with `--reuse-key` to register the same key.
 
-Scripted use: `xentree-connect init --yes --org org_123 --issuer https://lms.example.com` (never prompts; the token must come from `XENTREE_ADMIN_TOKEN`).
+Scripted use: `xentree-connect init --yes --org org_123 --issuer https://platform.example.com` (never prompts; the token must come from `XENTREE_ADMIN_TOKEN`).
 
 Add `--lang id` to any command for Indonesian output; by default the language is taken from `$LC_ALL`, `$LC_MESSAGES` or `$LANG`.
 
@@ -124,21 +124,21 @@ Notes: the key file must never be inside the web root or in version control. If 
 
 ---
 
-## Closed SaaS / Darwinbox
+## Closed SaaS Platforms
 
-Platforms like Darwinbox, Workday and SAP don't let you install code, so they can't hold a signing key. `xentree-connect gateway` is a small service **you host** that holds the key and does three jobs:
+Cloased platforms don't let you install code, so they can't hold a signing key. `xentree-connect gateway` is a small service **you host** that holds the key and does three jobs:
 
 | Endpoint | Listener | Purpose |
 | --- | --- | --- |
 | `GET`/`POST /launch` | public | Signs a 30-second assertion for the signed-in employee and returns a page that posts it to Xentree. |
-| `POST /webhook` | public | Receives Xentree's learning events, verifies them, de-duplicates, and (optionally) forwards them to your HRIS. |
+| `POST /webhook` | public | Receives Xentree's events, verifies them, de-duplicates, and (optionally) forwards them to your platform. |
 | `POST /deprovision/{user_id}` | **internal** | Releases an offboarded employee's seat. |
 | `GET /health` | both | Liveness probe: `{"status":"healthy","kid":"…"}`. |
 
 ```
  employee ──► [your SSO / reverse proxy] ──► gateway :8080 /launch ──► page auto-posts to Xentree
- Xentree  ──────────────────────────────────► gateway :8080 /webhook ──► your HRIS (optional relay)
- HRIS offboarding workflow ──► gateway :8081 /deprovision/{id}  (private network only)
+ Xentree  ──────────────────────────────────► gateway :8080 /webhook ──► your platform (optional relay)
+ platform offboarding workflow ──► gateway :8081 /deprovision/{id}  (private network only)
 ```
 
 ### 1. Register the integration
@@ -146,7 +146,7 @@ Platforms like Darwinbox, Workday and SAP don't let you install code, so they ca
 On any machine (a laptop is fine), run `init` with the details of your platform. The issuer is a URL you choose to identify your integration, with no trailing slash; the audience defaults to `xentree`:
 
 ```sh
-xentree-connect init --issuer https://hr.example.com --name "Darwinbox" --client-id darwinbox-prod
+xentree-connect init --issuer https://platform.example.com --name "Your-Vendor-Platform" --client-id Your-Vendor-Platform-prod
 ```
 
 Copy the private key and `xentree-connect.json` to the gateway host (see the permissions note below).
@@ -159,7 +159,7 @@ Generate the shared secret that callers must present, and decide where the webho
 export XENTREE_GATEWAY_SECRET="$(openssl rand -hex 32)"     # at least 32 characters is enforced
 export XENTREE_WEBHOOK_SECRET="whsec_…"                      # from step 4
 xentree-connect gateway --config /etc/xentree/xentree-connect.json \
-  --relay-webhook-url https://hris.example.com/api/xentree-events
+  --relay-webhook-url https://platform.example.com/api/xentree-events
 ```
 
 The gateway refuses to start if the key file is readable by anyone but its owner, or doesn't match the key registered with Xentree. It speaks **plain HTTP**: put it behind a TLS-terminating proxy or load balancer before exposing it.
@@ -190,11 +190,11 @@ docker run -d --name xentree-gateway \
   xentree-connect-gateway
 ```
 
-Publish only port `8080`. Port `8081` (`/deprovision`) must be reachable only from your HRIS/automation network — here, a private Docker network. The gateway warns at start-up that the internal listener isn't on loopback; inside a private network that is expected. The Dockerfile is an example and has not been built against a published release yet. Use `GET /health` for Kubernetes or load-balancer probes.
+Publish only port `8080`. Port `8081` (`/deprovision`) must be reachable only from your platform/automation network — here, a private Docker network. The gateway warns at start-up that the internal listener isn't on loopback; inside a private network that is expected. The Dockerfile is an example and has not been built against a published release yet. Use `GET /health` for Kubernetes or load-balancer probes.
 
 **On a VM**, run it under systemd as a dedicated user that owns the key (`0600`), with the two secrets in an `EnvironmentFile` readable only by root.
 
-### 3. Add the launch tile in Darwinbox
+### 3. Add the launch tile in the closed platform
 
 You want a tile or menu link that, for the signed-in employee, ends up at `https://<your-gateway>/launch`. **How the employee's identity reaches the gateway is the one decision that matters for security**, because the gateway signs whatever user it is told:
 
@@ -214,11 +214,11 @@ You want a tile or menu link that, for the signed-in employee, ends up at `https
 
 - **Avoid: a secret in the tile URL.** `--allow-query-secret` lets a link like `/launch?user_id=…&secret=…` work, but then *anyone who can see that link can sign in as any user ID they type*. It is off by default and prints a warning when enabled.
 
-Which of these your Darwinbox tenant can drive (custom navigation entries, SSO to external URLs, passing the employee ID) depends on your edition and configuration. The names of the menus differ between tenants, so follow Darwinbox's own administration documentation for adding a custom link, and point it at the proxy-protected `/launch` URL.
+Which of these your platform tenant can drive (custom navigation entries, SSO to external URLs, passing the employee ID) depends on your edition and configuration. The names of the menus differ between tenants, so follow vendor's own administration documentation for adding a custom link, and point it at the proxy-protected `/launch` URL.
 
 ### 4. Wire the webhook
 
-Tell Xentree where to send learning events. Your organization ID and client record ID are in `xentree-connect.json`.
+Tell Xentree where to send events. Your organization ID and client record ID are in `xentree-connect.json`.
 
 ```sh
 curl -sS -X POST "https://my.xentree.ai/api/admin/organizations/$ORG_ID/connect-clients/$CLIENT_RECORD_ID/webhooks" \
@@ -228,7 +228,7 @@ curl -sS -X POST "https://my.xentree.ai/api/admin/organizations/$ORG_ID/connect-
 
 The response contains a `signing_secret`. **It is shown once** — store it as `XENTREE_WEBHOOK_SECRET` and restart the gateway. If you lose it, rotate the secret in Xentree.
 
-Behaviour: every request is checked against `X-Xentree-Signature` (`t=<timestamp>,v1=<hex HMAC-SHA256>`) with a 5-minute window; bodies over 1 MB are refused; a repeated event `id` is acknowledged but processed only once; the acknowledgement is sent *before* the event is relayed to `--relay-webhook-url` (3 attempts), so a slow HRIS never delays Xentree.
+Behaviour: every request is checked against `X-Xentree-Signature` (`t=<timestamp>,v1=<hex HMAC-SHA256>`) with a 5-minute window; bodies over 1 MB are refused; a repeated event `id` is acknowledged but processed only once; the acknowledgement is sent *before* the event is relayed to `--relay-webhook-url` (3 attempts), so a slow platform never delays Xentree.
 
 **Rotating the secret.** After Xentree rotates, the old secret stays valid there for 24 hours. Run the gateway with both so no event is lost, then drop the old one:
 
@@ -241,7 +241,7 @@ XENTREE_PREVIOUS_SECRET_ROTATED_AT=<unix seconds of the rotation> xentree-connec
 
 ### 5. Offboarding
 
-When an employee leaves, have your HRIS workflow call the **internal** listener:
+When an employee leaves, have your platform workflow call the **internal** listener:
 
 ```sh
 curl -sS -X POST -H "Authorization: Bearer $XENTREE_GATEWAY_SECRET" http://gateway.internal:8081/deprovision/EMP123
