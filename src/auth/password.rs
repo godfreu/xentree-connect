@@ -15,6 +15,11 @@ struct TokenResponse {
     access_token: String,
 }
 
+/// `{base_url}/api/auth/token`, always on the caller's own base URL.
+fn token_url(base_url: &str) -> Result<url::Url, ApiError> {
+    endpoint_url(&normalize_base_url(base_url)?, &["api", "auth", "token"])
+}
+
 /// Exchanges credentials for an access token. Never follows redirects, so the
 /// password cannot be forwarded to another host.
 pub async fn login_with_password(
@@ -22,7 +27,7 @@ pub async fn login_with_password(
     email: &str,
     password: &SecretString,
 ) -> Result<SecretString, AuthError> {
-    let url = endpoint_url(&normalize_base_url(base_url)?, &["api", "auth", "token"])?;
+    let url = token_url(base_url)?;
     let http = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(15))
@@ -75,6 +80,30 @@ mod tests {
 
     fn pw(s: &str) -> SecretString {
         SecretString::from(s)
+    }
+
+    #[test]
+    fn token_url_keeps_the_developers_base_url() {
+        for (base, want) in [
+            (
+                "http://localhost:8000",
+                "http://localhost:8000/api/auth/token",
+            ),
+            (
+                "http://127.0.0.1:8000/",
+                "http://127.0.0.1:8000/api/auth/token",
+            ),
+            (
+                "https://learn.wiseree.com",
+                "https://learn.wiseree.com/api/auth/token",
+            ),
+            (
+                "https://stg.example.com/xt/",
+                "https://stg.example.com/xt/api/auth/token",
+            ),
+        ] {
+            assert_eq!(token_url(base).unwrap().as_str(), want, "{base}");
+        }
     }
 
     #[tokio::test]

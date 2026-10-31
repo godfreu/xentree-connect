@@ -215,6 +215,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn login_url_targets_the_given_base_url_only() {
+        let l = BrowserLogin::bind().await.unwrap();
+        for (base, origin_and_path) in [
+            ("http://localhost:8000", "http://localhost:8000/login"),
+            (
+                "https://learn.wiseree.com",
+                "https://learn.wiseree.com/login",
+            ),
+            (
+                "https://stg.example.com/xt",
+                "https://stg.example.com/xt/login",
+            ),
+        ] {
+            let url = l.login_url(&Url::parse(base).unwrap()).unwrap();
+            assert_eq!(&url.as_str()[..origin_and_path.len()], origin_and_path);
+            assert!(!url.as_str().contains("my.xentree.ai"), "{url}");
+        }
+    }
+
+    #[tokio::test]
     async fn captures_the_token_and_ignores_strays() {
         let l = BrowserLogin::bind().await.unwrap();
         let (port, state) = (l.port, l.state.clone());
