@@ -1,10 +1,11 @@
 [package]
 name = "xentree-connect"
-version = "0.2.1"
+version = "1.0.0"
+authors = ["PT Global Otomat Digital"]
 edition = "2021"
 rust-version = "1.82"
-description = "Xentree Connect: key management and assertion signing"
-license = "UNLICENSED"
+description = "Official client connector and reverse-bridge gateway for Xentree Connect"
+license-file = "LICENSE"
 publish = false
 
 [dependencies]

@@ -110,7 +110,7 @@
   "init.auth.select": "Bagaimana Anda ingin masuk ke Xentree?",
   "init.auth.password": "Masuk dengan Email & Kata Sandi (Terminal)",
   "init.auth.browser": "Masuk lewat Peramban Web (Membuka %{host})",
-  "init.auth.token": "Tempel Admin Bearer Token",
+  "init.auth.token": "Tempel Admin Bearer Token yang sudah ada",
   "init.auth.email": "Email Admin",
   "init.auth.password_prompt": "Kata Sandi Admin",
   "init.auth.bad_credentials": "Email atau kata sandi salah; coba lagi.",

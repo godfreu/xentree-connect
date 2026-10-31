@@ -2,7 +2,7 @@
 # Xentree Connect installer (Linux and macOS).
 #
 #   curl --proto '=https' --tlsv1.2 -fsSL https://get.xentree.ai/connect | sh
-#   curl --proto '=https' --tlsv1.2 -fsSL https://get.xentree.ai/connect | sh -s -- --init
+#   curl --proto '=https' --tlsv1.2 -fsSL https://get.xentree.ai/connect | sh -s -- --no-init
 #
 # Downloads the release binary for this machine and SHA256SUMS, verifies the
 # checksum, and only then installs it. Windows users: see install.ps1.
@@ -19,7 +19,9 @@ Install Xentree Connect.
 Usage: install.sh [OPTIONS]
 
 Options:
-  --init              Run `xentree-connect init` after installing
+  --no-init           Do not run `xentree-connect init` after installing
+                      (for scripts, CI and Docker builds)
+  --init              Run `xentree-connect init` after installing (the default)
   --version VERSION   Install a specific release, e.g. v1.2.3 (default: latest)
   --bin-dir DIR       Install into DIR (default: /usr/local/bin as root,
                       otherwise ~/.local/bin)
@@ -102,11 +104,12 @@ main() {
     base_url=${XENTREE_CONNECT_BASE_URL:-https://github.com/$repo/releases}
     version=${XENTREE_CONNECT_VERSION:-latest}
     bin_dir=${XENTREE_CONNECT_BIN_DIR:-}
-    run_init=0
+    run_init=1
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --init) run_init=1 ;;
+            --no-init) run_init=0 ;;
             --version)
                 [ $# -ge 2 ] || die "--version needs a value"
                 version=$2
@@ -218,7 +221,7 @@ Nothing was installed."
         elif (: </dev/tty) 2>/dev/null; then
             exec "$dest" init </dev/tty
         else
-            warn "no terminal available for the interactive setup; run: $dest init"
+            say "Next: xentree-connect init"
         fi
     else
         say ""

@@ -11,7 +11,7 @@
     cannot take parameters):
 
         irm https://get.xentree.ai/connect.ps1 | iex
-        & ([scriptblock]::Create((irm https://get.xentree.ai/connect.ps1))) -Init
+        & ([scriptblock]::Create((irm https://get.xentree.ai/connect.ps1))) -NoInit
 
 .PARAMETER Version
     Release to install, e.g. v1.2.3 (default: latest). Also XENTREE_CONNECT_VERSION.
@@ -19,8 +19,9 @@
 .PARAMETER InstallDir
     Where to put xentree-connect.exe (default: $HOME\.xentree\bin).
 
-.PARAMETER Init
-    Run `xentree-connect init` after installing.
+.PARAMETER NoInit
+    Do not run `xentree-connect init` after installing (for scripts and CI).
+    By default the setup wizard starts right after installation.
 
 .NOTES
     Environment: XENTREE_CONNECT_REPO ("owner/name") and XENTREE_CONNECT_BASE_URL
@@ -30,13 +31,13 @@
 param(
     [string]$Version = $env:XENTREE_CONNECT_VERSION,
     [string]$InstallDir = (Join-Path $HOME '.xentree\bin'),
-    [switch]$Init
+    [switch]$NoInit
 )
 
 # Everything lives in Main, called on the last line: a truncated download
 # defines a function and never runs.
 function Main {
-    param([string]$Version, [string]$InstallDir, [bool]$Init)
+    param([string]$Version, [string]$InstallDir, [bool]$NoInit)
 
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version Latest
@@ -127,7 +128,7 @@ function Main {
 
     Add-ToUserPath -Dir $InstallDir
 
-    if ($Init) {
+    if (-not $NoInit) {
         Write-Host ''
         & $dest init
     } else {
@@ -179,4 +180,4 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
     }
 }
 
-Main -Version $Version -InstallDir $InstallDir -Init ([bool]$Init)
+Main -Version $Version -InstallDir $InstallDir -NoInit ([bool]$NoInit)

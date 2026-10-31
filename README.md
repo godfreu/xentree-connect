@@ -24,20 +24,20 @@ Single-sign-on, webhooks and offboarding between your platform and Xentree.
 curl --proto '=https' --tlsv1.2 -fsSL https://get.xentree.ai/connect | sh
 ```
 
-Run as root it installs to `/usr/local/bin`; otherwise to `~/.local/bin`. To run the setup wizard straight away:
+Run as root it installs to `/usr/local/bin`; otherwise to `~/.local/bin`. The setup wizard (`init`) starts right after installing; for scripts, CI or Docker builds, skip it with `--no-init`:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://get.xentree.ai/connect | sh -s -- --init
+curl --proto '=https' --tlsv1.2 -fsSL https://get.xentree.ai/connect | sh -s -- --no-init
 ```
 
-Options: `--version v1.2.3`, `--bin-dir DIR`, `--help`.
+Options: `--no-init`, `--version v1.2.3`, `--bin-dir DIR`, `--help`.
 
 **Windows (PowerShell)**
 
 ```powershell
 irm https://get.xentree.ai/connect.ps1 | iex
-# with options:
-& ([scriptblock]::Create((irm https://get.xentree.ai/connect.ps1))) -Init -Version v1.2.3
+# with options (-NoInit skips the setup wizard):
+& ([scriptblock]::Create((irm https://get.xentree.ai/connect.ps1))) -NoInit -Version v1.2.3
 ```
 
 Installs to `%USERPROFILE%\.xentree\bin` and adds it to your user `PATH` (open a new terminal afterwards).

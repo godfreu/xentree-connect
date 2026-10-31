@@ -110,7 +110,7 @@
   "init.auth.select": "How would you like to authenticate with Xentree?",
   "init.auth.password": "Log in with Email & Password (Terminal)",
   "init.auth.browser": "Log in with Web Browser (Opens %{host})",
-  "init.auth.token": "Paste an Admin Bearer Token",
+  "init.auth.token": "Paste an existing Admin Bearer Token",
   "init.auth.email": "Admin Email",
   "init.auth.password_prompt": "Admin Password",
   "init.auth.bad_credentials": "Incorrect email or password; try again.",
