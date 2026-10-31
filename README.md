@@ -7,12 +7,12 @@ Single-sign-on, webhooks and offboarding between your platform and Xentree.
 - **generates and protects** the signing key for your integration (ES256 / ECDSA P-256),
 - **registers** the integration with your Xentree organization,
 - **checks** that the clock, key permissions and API access are healthy (`health`), and
-- **bridges closed SaaS platforms** that can't run a plugin, such as Darwinbox, Workday or SAP (`gateway`).
+- **bridges closed SaaS platforms** that can't run a plugin, closed platforms (`gateway`).
 
 | You run… | Use |
 | --- | --- |
 | Moodle (or another system where you can install code) | [`init`](#moodle) — the platform signs launches itself |
-| A closed SaaS platform | [`gateway`](#closed-saas--darwinbox) — a service you host signs for it |
+| A closed SaaS platform | [`gateway`](#closed-saas--platform) — a service you host signs for it |
 
 ---
 
@@ -124,9 +124,9 @@ Notes: the key file must never be inside the web root or in version control. If 
 
 ---
 
-## Closed SaaS / Darwinbox
+## Closed SaaS Platforms
 
-Platforms like Darwinbox, Workday and SAP don't let you install code, so they can't hold a signing key. `xentree-connect gateway` is a small service **you host** that holds the key and does three jobs:
+Cloased platforms don't let you install code, so they can't hold a signing key. `xentree-connect gateway` is a small service **you host** that holds the key and does three jobs:
 
 | Endpoint | Listener | Purpose |
 | --- | --- | --- |
@@ -146,7 +146,7 @@ Platforms like Darwinbox, Workday and SAP don't let you install code, so they ca
 On any machine (a laptop is fine), run `init` with the details of your platform. The issuer is a URL you choose to identify your integration, with no trailing slash; the audience defaults to `xentree`:
 
 ```sh
-xentree-connect init --issuer https://platform.example.com --name "Darwinbox" --client-id darwinbox-prod
+xentree-connect init --issuer https://platform.example.com --name "Your-Vendor-Platform" --client-id Your-Vendor-Platform-prod
 ```
 
 Copy the private key and `xentree-connect.json` to the gateway host (see the permissions note below).
@@ -194,7 +194,7 @@ Publish only port `8080`. Port `8081` (`/deprovision`) must be reachable only fr
 
 **On a VM**, run it under systemd as a dedicated user that owns the key (`0600`), with the two secrets in an `EnvironmentFile` readable only by root.
 
-### 3. Add the launch tile in Darwinbox
+### 3. Add the launch tile in the closed platform
 
 You want a tile or menu link that, for the signed-in employee, ends up at `https://<your-gateway>/launch`. **How the employee's identity reaches the gateway is the one decision that matters for security**, because the gateway signs whatever user it is told:
 
@@ -214,7 +214,7 @@ You want a tile or menu link that, for the signed-in employee, ends up at `https
 
 - **Avoid: a secret in the tile URL.** `--allow-query-secret` lets a link like `/launch?user_id=…&secret=…` work, but then *anyone who can see that link can sign in as any user ID they type*. It is off by default and prints a warning when enabled.
 
-Which of these your Darwinbox tenant can drive (custom navigation entries, SSO to external URLs, passing the employee ID) depends on your edition and configuration. The names of the menus differ between tenants, so follow Darwinbox's own administration documentation for adding a custom link, and point it at the proxy-protected `/launch` URL.
+Which of these your platform tenant can drive (custom navigation entries, SSO to external URLs, passing the employee ID) depends on your edition and configuration. The names of the menus differ between tenants, so follow vendor's own administration documentation for adding a custom link, and point it at the proxy-protected `/launch` URL.
 
 ### 4. Wire the webhook
 
