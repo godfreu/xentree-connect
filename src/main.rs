@@ -1,4 +1,4 @@
-use std::{path::PathBuf, process::ExitCode};
+use std::{io::Write, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 use secrecy::SecretString;
@@ -6,6 +6,7 @@ use xentree_connect::{
     commands::{
         health::{self, HealthArgs, HealthInputs},
         init::{self, InitArgs},
+        licenses::THIRD_PARTY_LICENSES,
     },
     gateway::{self, GatewayArgs},
     lang::{tr, Lang},
@@ -36,6 +37,8 @@ enum Command {
     Health(HealthArgs),
     /// Run the gateway for closed SaaS platforms (SSO launch, webhooks, deprovisioning).
     Gateway(GatewayArgs),
+    /// Print the third-party copyright notices and license terms.
+    Licenses,
 }
 
 fn admin_token() -> Option<SecretString> {
@@ -70,6 +73,11 @@ async fn main() -> ExitCode {
             let report = health::run(&inputs).await;
             print!("{}", report.render());
             ExitCode::from(report.exit_code())
+        }
+        Command::Licenses => {
+            // A closed pipe (`| head`) is not an error worth a panic.
+            let _ = std::io::stdout().write_all(THIRD_PARTY_LICENSES.as_bytes());
+            ExitCode::SUCCESS
         }
         Command::Gateway(args) => match gateway::run(args, lang).await {
             Ok(code) => code,

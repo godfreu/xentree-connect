@@ -1,0 +1,28 @@
+# Third-Party Licenses
+
+Xentree Connect is proprietary software of PT Global Otomat Digital. It
+includes the open-source components listed below, each used under the terms of
+its own license. Their copyright notices and license texts are reproduced here
+as those licenses require.
+
+## Summary
+
+{{#each overview}}
+- {{{name}}} ({{count}} crates)
+{{/each}}
+
+## Components
+
+{{#each licenses}}
+### {{{name}}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}

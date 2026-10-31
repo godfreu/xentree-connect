@@ -341,3 +341,7 @@ Flags: `--config FILE`, `--key FILE`, `--key-group GID` (Unix), `--base-url URL`
 ## Releases
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`: it checks the tag matches `Cargo.toml`, runs tests and clippy on Linux, macOS and Windows, builds all platforms, writes `SHA256SUMS`, attests the artifacts (public repositories only), and creates a **draft** GitHub Release. Nothing is public until you publish the draft — which is also the moment the installers' `latest` pointer moves to it. The release also carries `install.sh` and `install.ps1`; publish them at the installer URLs (`get.xentree.ai/connect`, `…/connect.ps1`).
+
+## Third-party licenses
+
+Xentree Connect is proprietary (see `LICENSE`). It includes open-source components under permissive licenses. Run `xentree-connect licenses` to print their copyright notices and terms; the same text ships as `THIRD_PARTY_LICENSES.md` with every release. After changing dependencies, regenerate it with `cargo about generate about.hbs -o THIRD_PARTY_LICENSES.md` (CI fails if it is stale), and `cargo deny check licenses` enforces the allowed licenses (`deny.toml`).

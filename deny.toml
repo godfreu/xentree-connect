@@ -1,0 +1,35 @@
+# License guardrail for the proprietary binary: `cargo deny check licenses`.
+# Only permissive licenses are allowed; copyleft (GPL/AGPL/LGPL/SSPL) is never
+# accepted. For dual-licensed crates (e.g. "MIT OR Apache-2.0 OR LGPL-2.1-or-later")
+# an allowed alternative is enough, and we elect that one.
+
+[graph]
+# Audit what ships, not just the host: all three release platforms.
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[licenses]
+# Our own crate (publish = false) is proprietary by design.
+private = { ignore = true }
+confidence-threshold = 0.93
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",       # successor of Unicode-DFS-2016, used by the unicode/ICU crates
+    "Unicode-DFS-2016",
+    "OpenSSL",
+]
+exceptions = [
+    # MPL-2.0 is file-level copyleft. option-ext is used unmodified and only
+    # linked, so the only obligation is to keep its source available (crates.io).
+    # Pulled in on Unix by `directories`; reviewed 2026-10-31.
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]

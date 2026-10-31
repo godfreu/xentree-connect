@@ -46,6 +46,20 @@ jobs:
         run: cargo test --locked
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Dependency licenses
+        if: runner.os == 'Linux'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+          arguments: --locked
+
+      - name: Third-party notices are up to date
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-about --version 0.8.4 --locked
+          cargo about generate about.hbs -o "$RUNNER_TEMP/THIRD_PARTY_LICENSES.md"
+          diff -u THIRD_PARTY_LICENSES.md "$RUNNER_TEMP/THIRD_PARTY_LICENSES.md" \
+            || { echo "::error::THIRD_PARTY_LICENSES.md is stale; run: cargo about generate about.hbs -o THIRD_PARTY_LICENSES.md"; exit 1; }
       - name: Installer script
         if: runner.os == 'Linux'
         run: |
@@ -121,6 +135,7 @@ jobs:
           "$bin" --version
           "$bin" --help > /dev/null
           "$bin" health --help > /dev/null
+          "$bin" licenses | grep -q "Third-Party Licenses"
 
       - name: Stage the release asset
         shell: bash
@@ -162,13 +177,13 @@ jobs:
           test -f xentree-connect-x86_64-pc-windows-msvc.exe
 
       - name: Add the installers
-        run: cp install.sh install.ps1 dist/
+        run: cp install.sh install.ps1 THIRD_PARTY_LICENSES.md dist/
 
       - name: SHA256SUMS
         working-directory: dist
         run: |
           # Covers the binaries (what the installers verify) and the installers themselves.
-          sha256sum xentree-connect-* install.sh install.ps1 > SHA256SUMS
+          sha256sum xentree-connect-* install.sh install.ps1 THIRD_PARTY_LICENSES.md > SHA256SUMS
           cat SHA256SUMS
 
       # Lets anyone check that a binary was built by this workflow from this
