@@ -18,9 +18,10 @@ use zeroize::Zeroizing;
 use crate::detectors::moodle;
 use crate::{
     api::{
-        ApiError, ConnectClientResponse, CreateConnectClientRequest, OrganizationItem,
-        XentreeAdminClient, DEFAULT_BASE_URL,
+        normalize_base_url, ApiError, ConnectClientResponse, CreateConnectClientRequest,
+        OrganizationItem, XentreeAdminClient, DEFAULT_BASE_URL,
     },
+    auth::{self, AuthError, BrowserLogin},
     clock::{self, Severity},
     config::{self, Config, OwnershipConfig, FILE_NAME, KEY_FILE_NAME},
     crypto::{CryptoError, Jwks, SigningKey},
@@ -30,6 +31,7 @@ use crate::{
         KeyOwnershipPolicy,
     },
     lang::{tr, Lang},
+    utils::{normalize_url, same_origin},
 };
 
 pub const DEFAULT_AUDIENCE: &str = "xentree";
@@ -336,13 +338,14 @@ async fn wizard(
     let base_url = match &args.base_url {
         Some(u) => u.clone(),
         None if yes => DEFAULT_BASE_URL.to_string(),
-        None => required_prompt(
-            lang,
-            &tr(lang, "init.prompt.base_url", &[]),
-            Some(DEFAULT_BASE_URL),
-            MAX_URL,
-        )?,
+        None => ask(Text::new(&tr(lang, "init.prompt.base_url", &[]))
+            .with_default(DEFAULT_BASE_URL.trim_start_matches("https://"))
+            .with_help_message(&tr(lang, "init.help.base_url", &[]))
+            .with_validator(url_validator(lang))
+            .prompt())?,
     };
+    let base_url = normalize_url(&base_url, true)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", tr(lang, "init.prompt.base_url", &[])))?;
 
     // 2. Clock.
     if !clock_step(&base_url, lang, yes).await? {
@@ -354,11 +357,7 @@ async fn wizard(
     let token = match token {
         Some(t) => t,
         None if yes => anyhow::bail!(tr(lang, "init.token.missing", &[])),
-        None => SecretString::from(ask(Password::new(&tr(lang, "init.token.prompt", &[]))
-            .with_help_message(&tr(lang, "init.token.help", &[]))
-            .with_display_mode(PasswordDisplayMode::Masked)
-            .without_confirmation()
-            .prompt())?),
+        None => authenticate(&base_url, lang).await?,
     };
     let client = XentreeAdminClient::with_base_url(&base_url, token)?;
     println!("{}", tr(lang, "init.orgs.fetching", &[]));
@@ -385,36 +384,53 @@ async fn wizard(
     );
 
     // 5. Integration details.
-    let name = text_or_default(
-        args.name.clone(),
-        yes,
-        lang,
-        &tr(lang, "init.prompt.name", &[]),
-        format!("Xentree Connect ({platform_name})"),
-        MAX_NAME,
-    )?;
-    let client_id = text_or_default(
-        args.client_id.clone(),
-        yes,
-        lang,
-        &tr(lang, "init.prompt.client_id", &[]),
-        format!("xentree-{}", platform.id().replace('_', "-")),
-        MAX_CLIENT_ID,
-    )?;
+    let name = match args.name.clone() {
+        None if !yes => custom_prompt(
+            &tr(lang, "init.prompt.name", &[]),
+            Some(&tr(lang, "init.help.name", &[])),
+            Some(&default_name(&dir, &platform, &platform_name)),
+            required(lang, MAX_NAME),
+        )?,
+        flag => text_or_default(
+            flag,
+            yes,
+            lang,
+            &tr(lang, "init.prompt.name", &[]),
+            default_name(&dir, &platform, &platform_name),
+            MAX_NAME,
+        )?,
+    };
+    let default_client_id = Some(slugify(&name))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("xentree-{}", platform.id().replace('_', "-")));
+    let client_id = match args.client_id.clone() {
+        None if !yes => slugify(&custom_prompt(
+            &tr(lang, "init.prompt.client_id", &[]),
+            Some(&tr(lang, "init.help.client_id", &[])),
+            Some(&default_client_id),
+            client_id_validator(lang),
+        )?),
+        flag => text_or_default(
+            flag,
+            yes,
+            lang,
+            &tr(lang, "init.prompt.client_id", &[]),
+            default_client_id,
+            MAX_CLIENT_ID,
+        )?,
+    };
     let issuer = match args.issuer.clone().or_else(|| platform.suggested_issuer()) {
         Some(default) if args.issuer.is_some() || yes => default,
-        Some(default) => required_prompt(
-            lang,
-            &tr(lang, "init.prompt.issuer", &[]),
-            Some(&default),
-            MAX_URL,
-        )?,
         None if yes => anyhow::bail!(tr(lang, "init.err.issuer_required", &[])),
-        None => required_prompt(lang, &tr(lang, "init.prompt.issuer", &[]), None, MAX_URL)?,
+        default => custom_prompt(
+            &tr(lang, "init.prompt.issuer", &[]),
+            Some(&tr(lang, "init.help.issuer", &[])),
+            default.as_deref(),
+            issuer_validator(lang, &base_url),
+        )?,
     };
-    validate_text(lang, &issuer, MAX_URL)
+    let issuer = resolve_issuer(lang, &issuer, &base_url)
         .map_err(|m| anyhow::anyhow!("{}: {m}", tr(lang, "init.prompt.issuer", &[])))?;
-    let issuer = issuer.trim().trim_end_matches('/').to_string();
     let audience = text_or_default(
         args.audience.clone(),
         yes,
@@ -522,6 +538,193 @@ async fn wizard(
         )),
         Err(e) => Err(e.into()),
     }
+}
+
+/// Which way the admin proves who they are.
+#[derive(Clone, Copy)]
+enum AuthMethod {
+    Password,
+    Browser,
+    Token,
+}
+
+struct MethodChoice(AuthMethod, String);
+
+impl std::fmt::Display for MethodChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.1)
+    }
+}
+
+const BROWSER_LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const PASSWORD_ATTEMPTS: usize = 3;
+
+/// `gh auth login` style: pick a method, get an admin bearer token.
+async fn authenticate(base_url: &str, lang: Lang) -> anyhow::Result<SecretString> {
+    let host = url::Url::parse(base_url)
+        .ok()
+        .and_then(|u| u.host_str().map(String::from))
+        .unwrap_or_else(|| base_url.to_string());
+    let choices = [
+        (AuthMethod::Password, "init.auth.password"),
+        (AuthMethod::Browser, "init.auth.browser"),
+        (AuthMethod::Token, "init.auth.token"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (m, key))| {
+        let label = tr(lang, key, &[("host", &host)]);
+        MethodChoice(m, format!("[{}] {label}", i + 1))
+    })
+    .collect();
+    let method = ask(Select::new(&tr(lang, "init.auth.select", &[]), choices).prompt())?.0;
+    match method {
+        AuthMethod::Password => login_password(base_url, lang).await,
+        AuthMethod::Browser => login_browser(base_url, lang).await,
+        AuthMethod::Token => Ok(SecretString::from(ask(Password::new(&tr(
+            lang,
+            "init.token.prompt",
+            &[],
+        ))
+        .with_help_message(&tr(lang, "init.token.help", &[]))
+        .with_display_mode(PasswordDisplayMode::Masked)
+        .without_confirmation()
+        .prompt())?)),
+    }
+}
+
+async fn login_password(base_url: &str, lang: Lang) -> anyhow::Result<SecretString> {
+    let email = ask(Text::new(&tr(lang, "init.auth.email", &[]))
+        .with_validator(email_validator(lang))
+        .prompt())?;
+    for attempt in 1..=PASSWORD_ATTEMPTS {
+        let password = SecretString::from(ask(Password::new(&tr(
+            lang,
+            "init.auth.password_prompt",
+            &[],
+        ))
+        .with_display_mode(PasswordDisplayMode::Masked)
+        .without_confirmation()
+        .prompt())?);
+        match auth::login_with_password(base_url, email.trim(), &password).await {
+            Ok(token) => {
+                println!("{}", tr(lang, "init.auth.logged_in", &[]));
+                return Ok(token);
+            }
+            Err(AuthError::InvalidCredentials) if attempt < PASSWORD_ATTEMPTS => {
+                eprintln!("{}", tr(lang, "init.auth.bad_credentials", &[]));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    unreachable!("the last attempt returns")
+}
+
+async fn login_browser(base_url: &str, lang: Lang) -> anyhow::Result<SecretString> {
+    let login = BrowserLogin::bind().await?;
+    let url = login.login_url(&normalize_base_url(base_url)?)?;
+    if auth::open_browser(url.as_str()) {
+        println!("{}", tr(lang, "init.auth.opening", &[]));
+    }
+    println!(
+        "{}",
+        tr(lang, "init.auth.open_link", &[("url", url.as_str())])
+    );
+    let token = login.wait(BROWSER_LOGIN_TIMEOUT).await?;
+    println!("{}", tr(lang, "init.auth.logged_in", &[]));
+    Ok(token)
+}
+
+/// Name suggestion: the project directory for plain projects, otherwise the platform.
+fn default_name(dir: &Path, platform: &DetectedPlatform, platform_name: &str) -> String {
+    let dir_name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().trim().to_string())
+        .filter(|n| !n.is_empty());
+    match (platform, dir_name) {
+        (DetectedPlatform::Generic, Some(n)) => n,
+        _ => format!("Xentree Connect ({platform_name})"),
+    }
+}
+
+/// The issuer as a normalized URL, or a localized reason it can't be used.
+/// Xentree's own URL is rejected: the issuer is the platform being connected.
+pub fn resolve_issuer(lang: Lang, raw: &str, base_url: &str) -> Result<String, String> {
+    validate_text(lang, raw, MAX_URL)?;
+    let issuer = normalize_url(raw, true).map_err(|_| tr(lang, "init.validation.url", &[]))?;
+    if same_origin(&issuer, base_url) {
+        return Err(tr(lang, "init.validation.issuer_is_xentree", &[]));
+    }
+    Ok(issuer)
+}
+
+type Validated = Result<inquire::validator::Validation, inquire::CustomUserError>;
+
+fn to_validation(r: Result<(), String>) -> Validated {
+    Ok(match r {
+        Ok(()) => inquire::validator::Validation::Valid,
+        Err(m) => inquire::validator::Validation::Invalid(m.into()),
+    })
+}
+
+fn url_validator(lang: Lang) -> impl inquire::validator::StringValidator + Clone {
+    move |input: &str| {
+        to_validation(
+            normalize_url(input, true)
+                .map(drop)
+                .map_err(|_| tr(lang, "init.validation.url", &[])),
+        )
+    }
+}
+
+fn issuer_validator(
+    lang: Lang,
+    base_url: &str,
+) -> impl inquire::validator::StringValidator + Clone {
+    let base_url = base_url.to_string();
+    move |input: &str| to_validation(resolve_issuer(lang, input, &base_url).map(drop))
+}
+
+fn client_id_validator(lang: Lang) -> impl inquire::validator::StringValidator + Clone {
+    move |input: &str| {
+        to_validation(if slugify(input).is_empty() {
+            Err(tr(lang, "init.validation.client_id", &[]))
+        } else {
+            Ok(())
+        })
+    }
+}
+
+fn is_email(s: &str) -> bool {
+    s.trim().split_once('@').is_some_and(|(user, host)| {
+        !user.is_empty() && host.contains('.') && !host.contains('@') && !host.ends_with('.')
+    })
+}
+
+fn email_validator(lang: Lang) -> impl inquire::validator::StringValidator + Clone {
+    move |input: &str| {
+        to_validation(if is_email(input) {
+            Ok(())
+        } else {
+            Err(tr(lang, "init.validation.email", &[]))
+        })
+    }
+}
+
+fn custom_prompt(
+    prompt: &str,
+    help: Option<&str>,
+    default: Option<&str>,
+    validator: impl inquire::validator::StringValidator + 'static,
+) -> anyhow::Result<String> {
+    let mut text = Text::new(prompt).with_validator(validator);
+    if let Some(h) = help {
+        text = text.with_help_message(h);
+    }
+    if let Some(d) = default {
+        text = text.with_default(d);
+    }
+    Ok(ask(text.prompt())?.trim().to_string())
 }
 
 async fn clock_step(base_url: &str, lang: Lang, yes: bool) -> anyhow::Result<bool> {
@@ -1030,6 +1233,56 @@ mod tests {
             MAX_CLIENT_ID
         )
         .is_err());
+    }
+
+    #[test]
+    fn issuer_is_normalized_and_must_not_be_xentree() {
+        let l = Lang::En;
+        let base = "https://my.xentree.ai";
+        assert_eq!(
+            resolve_issuer(l, "demo.wiseree.com/", base).unwrap(),
+            "https://demo.wiseree.com"
+        );
+        assert_eq!(
+            resolve_issuer(l, "  https://moodle.org.id/  ", base).unwrap(),
+            "https://moodle.org.id"
+        );
+        for xentree in [
+            "my.xentree.ai",
+            "https://my.xentree.ai/",
+            "HTTPS://MY.XENTREE.AI:443",
+        ] {
+            assert_eq!(
+                resolve_issuer(l, xentree, base).unwrap_err(),
+                tr(l, "init.validation.issuer_is_xentree", &[]),
+                "{xentree}"
+            );
+        }
+        assert!(resolve_issuer(l, "", base).is_err());
+        assert!(resolve_issuer(l, "not a url", base).is_err());
+    }
+
+    #[test]
+    fn emails_are_checked_loosely() {
+        for ok in ["a@b.co", " admin@learn.example.com "] {
+            assert!(is_email(ok), "{ok}");
+        }
+        for bad in ["", "a", "a@b", "@b.co", "a@@b.co", "a@b."] {
+            assert!(!is_email(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn name_defaults_to_the_directory_for_generic_projects() {
+        let g = DetectedPlatform::Generic;
+        assert_eq!(
+            default_name(Path::new("/srv/wiseree-portal"), &g, "Generic"),
+            "wiseree-portal"
+        );
+        assert_eq!(
+            default_name(Path::new("/"), &g, "Generic"),
+            "Xentree Connect (Generic)"
+        );
     }
 
     #[test]

@@ -64,12 +64,12 @@ cargo build --release --locked      # binary: target/release/xentree-connect
 ## Quick start
 
 ```sh
-export XENTREE_ADMIN_TOKEN=...      # an Organization Administrator's bearer token (or paste it at the masked prompt)
+export XENTREE_ADMIN_TOKEN=...      # an Organization Administrator's bearer token (or choose email/password, browser or paste login when `init` asks)
 xentree-connect init                # generate a key, register the integration
 xentree-connect health              # confirm everything is in order
 ```
 
-`init` asks for your Xentree URL (default `https://my.xentree.ai`, or your custom domain), checks the system clock, lists the organizations your token administers, detects your platform, and then:
+`init` asks for your Xentree host (default `my.xentree.ai`, or your custom domain; `https://` is added for you), checks the system clock, signs you in (email & password, web browser, or a pasted token, unless `XENTREE_ADMIN_TOKEN` is set), lists the organizations you administer, detects your platform, and then:
 
 1. generates an ES256 key pair and stores the private key with owner-only permissions,
 2. registers the integration (public key only) with Xentree,
@@ -100,7 +100,7 @@ Moodle signs launch assertions itself, so it needs to **read the private key**. 
    sudo xentree-connect init
    ```
 
-   Paste your admin token at the masked prompt. Run it as root (or as a member of the web-server group): giving a file to another group needs that privilege. `init` will:
+   Sign in when prompted (email & password, browser, or a pasted admin token). Run it as root (or as a member of the web-server group): giving a file to another group needs that privilege. `init` will:
 
    - recognise the Moodle site and use its `$CFG->wwwroot` as the **issuer**;
    - store the key at `<dataroot>/keys/xentree_private.pem` (for example `/var/www/moodledata/keys/`), creating the `keys` directory as `0750`;
